@@ -39,6 +39,7 @@ from torch.testing._internal.opinfo import core as opinfo_core
 from torch.utils import _pytree as pytree
 
 import onnxscript
+from onnxscript.function_libs.torch_lib.ops.core import aten_embedding_bag_padding_idx
 from tests.function_libs.torch_lib import (
     error_reproduction,
     ops_test_common,
@@ -326,6 +327,46 @@ class TestOutputConsistencyFullGraph(unittest.TestCase):
             ops_test_common.graph_executor,
             ops_test_data.COMPLEX_FUNCTION_MAPPING,
         )
+
+    def test_embedding_bag_issue_1056(self):
+        """
+        Reproduction test for https://github.com/microsoft/onnxscript/issues/1056
+        """
+
+        # Data from the GitHub issue
+        weight = np.array(
+            [[-2.7199, -1.7691, -8.5981, -5.9605, -3.7100],
+             [0.3334, 3.5580, 5.4002, -6.1015, -3.9192],
+             [3.2690, 7.4735, -1.8522, 6.7348, -1.4507],
+             [0.9523, 8.1493, -8.3490, -5.6658, -2.2785],
+             [-3.5082, 7.7760, -5.8336, -4.1430, -6.2878],
+             [-8.4290, -5.2537, 7.7364, 4.0160, 4.3621],
+             [0.4733, -4.6142, 1.5227, -8.4033, -6.5031],
+             [-4.6398, 5.6784, 5.2769, -3.9915, -0.3247],
+             [5.7560, 8.9472, 3.5719, 1.2158, 6.0344],
+             [-5.2992, 1.6771, -6.9777, -6.2378, -4.6493]],
+            dtype=np.float16)
+        indices = np.array([4, 9, 3, 0, 3], dtype=np.int64)
+        offsets = np.array([0, 3], dtype=np.int64)
+        per_sample_weights = np.array([2.4134, -0.1783, 7.1360, -0.7987, 2.3815], dtype=np.float16)
+
+        # Get the PyTorch result
+        torch_weight = torch.from_numpy(weight)
+        torch_indices = torch.from_numpy(indices)
+        torch_offsets = torch.from_numpy(offsets)
+        torch_per_sample_weights = torch.from_numpy(per_sample_weights)
+
+        expected_outputs, _, _, _ = torch.ops.aten._embedding_bag_forward_only(
+            torch_weight, torch_indices, torch_offsets, per_sample_weights=torch_per_sample_weights, mode=0
+        )
+
+        # Get the ONNX Script result by calling the function directly
+        onnx_outputs, _, _, _ = aten_embedding_bag_padding_idx(
+            weight, indices, offsets, per_sample_weights=per_sample_weights, mode=0, padding_idx=-1
+        )
+
+        # Compare the results
+        torch.testing.assert_close(torch.from_numpy(onnx_outputs[0]), expected_outputs)
 
 
 common_device_type.instantiate_device_type_tests(
